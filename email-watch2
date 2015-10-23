@@ -1,0 +1,610 @@
+#!/usr/bin/perl
+use Term::ANSIColor qw (:constants);
+use Time::Local;
+use strict;
+use warnings;
+use File::Tail;
+
+my $version="v2.1.0";
+# This Version:
+#   Running via Tail - in progress
+#   Increasing modularity - done
+# TO DO:
+#   option for only showing the last hour/day/week of result
+#   option to only show the last 'n' results
+#   Continuous running mode which uses tail.  probably needs a complete rewrite
+#   option to hide the QID
+#   tracking the initial contact which uses a 5 digit QID
+#   option to have a numerical summary of all emails received
+#       local, non-local, total, ham, spam per hour, day, week
+#   emphasise mail from certain email addresses (e.g. family)
+#
+# 2.1: add imapd stats
+my @options = @ARGV;
+my $verbose = 0;
+my $reports = 0;
+my $show_imap_stats = 1;
+my $all = 0;
+my $last = 0;
+print "Options:\n";
+foreach my $option (@options) {
+    chomp $option;
+    print "\t$option\n";
+    if ( $option eq "verbose" ) {$verbose=1;}
+    if ( $option eq "reports" ) {$reports=1;}
+    if ( $option eq "all" ) {$all=1;}
+    if ( $option eq "last" ) {$last=1;}
+}
+
+my @logs=("/var/log/maillog.1.gz", "/var/log/maillog.1", "/var/log/maillog");
+if ( $all==1) { @logs=`ls /var/log/maillog*`;}
+if ( $last==1) { @logs=("/var/log/maillog.4.gz", "/var/log/maillog.3.gz", "/var/log/maillog.2.gz", "/var/log/maillog.1.gz", "/var/log/maillog");}
+#my @logs=`ls /var/log/maillog`;
+my %times;
+my %timestamp;
+my %from;
+my %to;
+my %months=( "Jan"=>0, "Feb"=>1, "Mar"=>2, "Apr"=>3, "May"=>4, "Jun"=>5,
+    "Jul"=>6, "Aug"=>7, "Sep"=>8, "Oct"=>9, "Nov"=>10, "Dec"=>11 );
+my %size;
+my %relay;
+my %to_relay;
+my %from_relay;
+my %ip_addr;
+my %host;
+my %reject;
+my %dsn;
+my %delay;
+my %ntries;
+my %transaction_completed;
+my %spam_score;
+my %required_score;
+my %spam_tests;
+my %spam_report;
+my %stat;
+my %invalid_userids;
+my $year = `date +%Y`;
+my $runtime=`date +%s`;
+my %ctladdr;
+my %connecting_hosts;
+my %rejected_hosts;
+my %authfailures;
+my %lastauthfailure;;
+my %lastconnection;;
+my %imap_connects;
+my %imaps_connects;
+my %auth_imap_users;
+my %unauth_imap_users;
+my %mechs;
+my %users_by_ip;
+my %imap_connections;
+my %services;
+my %ipv6_addr;
+my %ipv6_hosts;
+
+# Setup the iptables rule if required:
+my $iptable_name = "SMTP_REJECT";
+my @iptables_hosts = make_iptable($iptable_name);
+
+# Parse the log files first
+foreach my $log (@logs) {
+    chomp $log;
+    # should replace this with a while $fh {} to start parsing faster
+    #my @lines;
+    #if ( $log =~ /\.gz$/) {
+    #    @lines=`gunzip -c $log`;
+    #} else {
+    #    @lines=`cat $log`;
+    #}
+    my $logfh;
+    if ( $log =~ /\.gz$/){
+        open ($logfh, "-|", "gunzip -c $log");
+    } else {
+        open ($logfh,"<", $log);
+    }
+    while (my $line=<$logfh>) {
+        chomp $line;
+        print GREEN, "$line\n" if $verbose;
+        &parse_5_digit_pid($log, $line);
+        &parse_14_digit_pid($log, $line);
+    }
+    close $logfh;
+}
+print "\n";
+
+# report on the invalid usernames
+foreach my $userid (sort keys %invalid_userids) {
+    if (exists($invalid_userids{$userid})) {
+        if ($invalid_userids{$userid} > 1) {
+            print "\t$invalid_userids{$userid} attempts to deliver to $userid\n";
+        }
+    }
+}
+
+# report on the connecting Hosts
+my $limit = 100;
+print "Hosts with more than $limit connections:\n";
+foreach my $host (sort keys %connecting_hosts){
+    if (exists($connecting_hosts{$host})) {
+        if ($connecting_hosts{$host} > $limit ) {
+            print "\t$connecting_hosts{$host} connections from $host. Last at $lastconnection{$host}. ";
+            if (exists($rejected_hosts{$host})) {
+                print "Host rejected $rejected_hosts{$host} times.";
+            }
+            #add_host_to_iptable($iptable_name, $host);
+            print "\n";
+        }
+    }
+}
+
+# report on the auth failures
+print "Authentication failures:\n";
+foreach my $host (sort {$lastauthfailure{$a} cmp $lastauthfailure{$b} } keys %authfailures) {
+    if (exists($authfailures{$host})) {
+        #if ($invalid_userids{$userid} > 1) {
+            print "\t$authfailures{$host} authentication failures from $host. Last at $lastauthfailure{$host}.\n";
+        #add_host_to_iptable($iptable_name, $host);
+        my $cmd = "sendmail : $host : spawn /usr/bin/echo \"IP Address blocked on for unauthorised access attempts\"";
+        #print "$cmd\n";
+        my $result = `sudo echo "$cmd" >> /etc/hosts.deny`;
+        #print "\n";
+        #}
+    }
+}
+
+#report on the ipv6 activity
+
+# Manage the hosts.deny file
+my $result = `manage_hosts_deny.pl`;
+
+# report on the imap stats
+if ($show_imap_stats) {
+    print "IMAP Stats: Connections\n";
+    print "IPv4 Address\timap\tSSL\t";
+    foreach my $user (sort keys %auth_imap_users) {
+        print "$user\t";
+    }
+    print "\n";
+    foreach my $host (sort {$imap_connects{$b} <=> $imap_connects{$a} } keys %imap_connects ){
+        print "$host\t";
+        print "$imap_connects{$host}\t"if exists($imap_connects{$host});
+        print "$imaps_connects{$host}\t"if exists($imaps_connects{$host});
+        foreach my $user (sort keys %auth_imap_users) {
+            print "$users_by_ip{$user.'.'.$host}\t" if exists($users_by_ip{$user.'.'.$host});
+        }
+        print "\n";
+    }
+    print "Users\n";
+    foreach my $user (sort keys %auth_imap_users) {
+        print "\t$user\t";
+        print "$auth_imap_users{$user}\t" if exists($auth_imap_users{$user});
+        print "\n";
+    }
+
+    # report on the services using the logfile
+    print "Services:\n";
+    foreach my $service (sort keys %services){
+        print "\t$service: $services{$service}\n";
+    }
+}
+
+#print "now tailling...";
+# Then tail -f the maillog
+#my $log = "/var/log/maillog";
+#my $tail = File::Tail->new($log);
+#while (defined(my $line=$tail->read)) {
+#   chomp $line;
+#   print GREEN, "$line\n" if $verbose;
+#   &parse_5_digit_pid($log, $line);
+#   &parse_14_digit_pid($log, $line);
+#}
+
+#exit if $verbose;
+#sleep 20 if $verbose;
+#print "\n";
+
+#foreach my $qid (sort {$timestamp{$a} <=> $timestamp{$b} } keys %timestamp) {
+#foreach my $qid (sort by_timestamp_and_qid keys %timestamp) {
+#   print WHITE, "\n";
+#   print WHITE, "$qid ";
+#   #print WHITE, "$qid " if $verbose;
+#   print WHITE, "$times{$qid} " if exists($times{$qid});
+#   print GREEN, "$ip_addr{$qid} " if exists($ip_addr{$qid});
+#   print GREEN, "[$from_relay{$qid}] " if exists $from_relay{$qid};
+#   print GREEN, "-> " if exists($to_relay{$qid}) && exists($from_relay{$qid});;
+#   print GREEN, "[$to_relay{$qid}] " if exists $to_relay{$qid};
+#   print CYAN, "$from{$qid} -> " if exists $from{$qid};
+#   print CYAN, "$to{$qid} " if exists $to{$qid};
+#   print CYAN, "($size{$qid} bytes) " if exists $size{$qid};
+#   print GREEN, "$stat{$qid}" if exists $stat{$qid};
+#   if ( exists($spam_score{$qid}) ) {
+#       print " $spam_score{$qid}/$required_score{$qid}";
+#       if ( exists($spam_report{$qid}) ) {
+#           print YELLOW, "$spam_report{$qid}" if $reports;
+#       } else {
+#           print YELLOW, "\n\t\t$spam_tests{$qid}" if $reports;
+#       }
+#   }
+#}
+
+#print "\n", RESET;
+#my $events = keys %timestamp;
+#my $emails = keys %times;
+#my $spam = keys %spam_score;
+##my $realmail = keys %realmails;
+#print "Sent: Total events:\t$events\n";
+#print "Sent: Total emails:\t$emails\n";
+##print "Sent: Real emails:\t$realmail\n";
+#print "Sent: Spam emails:\t$spam\n";
+
+
+### subroutines
+sub by_timestamp_and_qid {
+    $timestamp{$a} <=> $timestamp{$b} or
+    $a cmp $b
+}
+
+sub parse_5_digit_pid() {
+    # Parse for the 5 digit PID (can be 4 digits too)
+    my $log = shift;
+    my $line = shift;
+    if ( $line =~ /^([A-Z][a-z]{2} [0-9 ]{2} [0-9:]{8}) (.*) ([a-z]+)\[([0-9]+)\]: (.*)$/) {
+        my $date=$1;
+        my $hostname=$2;
+        my $service=$3;
+        my $pid=$4;
+        my $data=$5;
+        $services{$service}++;
+        $pid =~ sprintf ( "%5s", $pid );
+        if ( $log =~ /\.gz$/) { $pid.=".1"; } else { $pid.=".0"; }
+        $imap_connections{$pid} = IMAP_Connection->new($pid);
+        #Jul 28 11:37:53 gizmo imapd[11357]: imap service init from 112.118.153.228
+        #Jul 28 11:37:53 gizmo imapd[11357]: Login user=odaiwai host=n112118153228.netvigator.com [112.118.153.228]
+        #Jul 28 11:37:53 gizmo imapd[10825]: Killed (lost mailbox lock) user=odaiwai host=n112118153228.netvigator.com [112.118.153.228]
+        #Jul 28 11:37:54 gizmo imapd[11358]: Authenticated user=odaiwai host=n112118153228.netvigator.com [112.118.153.228] mech=CRAM-MD5
+        #Jul 28 11:38:05 gizmo imapd[11364]: imaps SSL service init from 112.118.153.228
+        #Jul 28 11:38:05 gizmo imapd[11364]: Login user=odaiwai host=n112118153228.netvigator.com [112.118.153.228]
+        #Jul 28 11:38:22 gizmo imapd[11369]: imap service init from 112.118.153.228
+        #Jul 28 11:38:27 gizmo imapd[11367]: Login user=odaiwai host=[112.118.153.228]
+        #Jul 28 11:38:27 gizmo imapd[11358]: Killed (lost mailbox lock) user=odaiwai host=n112118153228.netvigator.com [112.118.153.228]
+        if ( $data =~ /imap(s SSL)* service init from ([0-9.]+)$/ ){
+            my $host=$2;
+            $imap_connects{$host}++;
+            $imap_connections{$pid}->{host} = $host;
+            if ($1) {
+                $imaps_connects{$host}++;
+                $imap_connections{$pid}->{ssl} = 1;
+            }
+        }
+        if ( $data =~ /Unable to accept SSL connection, host=(.*) \[([0-9.]+)\]/) {
+            my $hostname = $1;
+            my $host = $2;
+            $imap_connections{$pid}->{hostname} = $hostname;
+            $imap_connections{$pid}->{host} = $host;
+        }
+        if ( $data =~ /SSL error status: (.*)/) {
+                my $error = $1;
+                $imap_connections{$pid}->{ssl_error}
+        }
+        #              Login user=odaiwai host=[203.145.79.159]
+        if ( $data =~ /Login user\=(.*) host\=\[([0-9.]+)\]/){
+            my $user = $1;
+            my $host = $2;
+            #print "\t$data\n\t$pid, $user, $host\n";
+            $imap_connections{$pid}->{host} = $host;
+            $imap_connections{$pid}->{user} = $user;
+            $auth_imap_users{$user}++;
+            $users_by_ip{$user.".".$host}++;
+        }
+        if ( $data =~ /Authenticated user=(.*) host=(.*) \[([0-9.]+)\] mech=(.*)/){
+            my $user = $1;
+            my $hostname = $2;
+            my $host = $3;
+            my $mech = $4;
+            $imap_connections{$pid}->{host} = $host;
+            $imap_connections{$pid}->{mech} = $mech;
+            $imap_connections{$pid}->{user} = $user;
+            $auth_imap_users{$user}++;
+            $mechs{$mech}++;
+            $users_by_ip{$user.".".$host}++;
+        }
+        if ( $data =~ /Unexpected client disconnect, while reading line user=(.*) host=(.*) \[([0-9.]+)\]/){
+            my $user = $1;
+            my $hostname = $2;
+            my $host = $3;
+            $unauth_imap_users{$user}++;
+            $users_by_ip{$user.".".$host}++;
+        }
+
+    }
+    if ( $line =~ /^([A-Z][a-z]{2} [0-9 ]{2} [0-9:]{8}) (.*) sendmail\[([0-9]+)\]: (.*)$/) {
+        my $date=$1;
+        my $hostname=$2;
+        my $pid=$3;
+        my $data=$4;
+        $pid =~ sprintf ( "%5s", $pid );
+        #$pid=$log.$pid;
+        if ( $log =~ /\.gz$/) { $pid.=".1"; } else { $pid.=".0"; }
+        print RED, "\tdate:\t$date\n" if $verbose;
+        print RED, "\thostname:\t$hostname\n" if $verbose;
+        print RED, "\tpid:\t$pid\n" if $verbose;
+        print RED, "\tdata:\t$data\n" if $verbose;
+        if ( $data =~ /NOQUEUE: connect from (.*)\[([0-9.]+)\].*$/ ){
+            #this never has the qid, but we can count connections
+            my $ip_addr=$2;
+            my $host=$1;
+            #$timestamp{$pid}=$timestamp;
+            # The number of connections is not a problem per se - but a high
+            # count probably indicates that there's something trying to
+            # connect a lot, but not delivering anything.
+            $connecting_hosts{$ip_addr}++;
+            $lastconnection{$ip_addr} = $date;
+
+        }
+        if ( $data =~ /NOQUEUE: connect from \[([0-9.:a-zA-Z]+)\].*$/ ){
+            #this never has the qid, but we can count connections
+            my $ip_addr=$1;
+            $connecting_hosts{$ip_addr}++;
+        }
+        if ( $data =~ /NOQUEUE: tcpwrappers \(unknown, ([0-9.:a-zA-Z]+)\) rejection/) {
+            my $ip_addr = $1;
+            $rejected_hosts{$ip_addr}++;
+            #print "Rejected Hosts $ip_addr, $rejected_hosts{$ip_addr}\n";
+        }
+    }
+}
+
+sub parse_14_digit_pid() {
+    # Parse for the 5 digit PID
+    my $log = shift;
+    my $line = shift;
+    if ( $line =~ /^([A-Z][a-z]{2} [0-9 ]{2} [0-9:]{8}) (.*) sendmail\[([0-9]*)\]: ([a-zA-Z0-9]{9}[0-9]{5}): (.*)$/) {
+        my $date=$1;
+        my $hostname=$2;
+        my $pid=$3;
+        my $qid=$4;
+        my $data=$5;
+        print RED, "\tdate:\t($qid)\t$date\n" if $verbose;
+        print RED, "\thostname:\t($qid)\t$hostname\n" if $verbose;
+        print RED, "\tpid:\t($qid)\t$pid\n" if $verbose;
+        print RED, "\tqid:\t($qid)\t$qid\n" if $verbose;
+        print RED, "\tdata:\t($qid)\t$data\n" if $verbose;
+        my ($month, $day, $time) = split /\s+/, $date, 3;
+        my ($hours, $minutes, $seconds) = split /:+/, $time;
+            my $mnum=$months{$month};
+        my $timestamp=timelocal($seconds, $minutes, $hours, $day, $mnum, $year-1900);
+        if ($timestamp>$runtime) {
+            print "\t$timestamp in the future!  Assuming " if $verbose;
+            $timestamp=timelocal($seconds, $minutes, $hours, $day, $mnum, $year-1901);
+            print "\t$timestamp \n" if $verbose;
+            }
+        $timestamp{$qid}=$timestamp;
+        $transaction_completed{$qid} = 0 if not(exists($transaction_completed{$qid}));
+
+        if ( $data =~ /from=([^ ]*),/ ) {
+            $from{$qid}=$1;
+            $from{$qid}=~s/[\<\>]//g;
+            $times{$qid}=$date;
+            print YELLOW "\tfrom:\t($qid)\t$from{$qid}\n" if $verbose;
+            $transaction_completed{$qid} += 0.5;
+        }
+        if ( $data =~ /^to=([^ ]*),/ ) {
+            if ( exists($to{$qid})) {
+                $to{$qid}.=", $1";
+            } else {
+                $to{$qid}=$1;
+            }
+            $to{$qid}=~s/[\<\>]//g;
+            $times{$qid}=$date;
+            print YELLOW "\tto:\t($qid)\t$to{$qid}\n" if $verbose;
+        }
+        if ( $data =~ /ruleset=check_rcpt, arg1=([^ ]*),/ ) {
+            $to{$qid}=$1;
+            $to{$qid}=~s/[\<\>]//g;
+            $times{$qid}=$date;
+            print YELLOW "\tto:\t($qid)\t$to{$qid}\n" if $verbose;
+        }
+        if ( $data =~ /reject=(.*)$/ ) {
+            $stat{$qid}=$1;
+            $times{$qid}=$date;
+            print YELLOW "\tstat1:\t($qid)\t$stat{$qid}\n" if $verbose;
+        }
+        if ( $data =~ /<([^>]*)>...  550 (.*)$/ ) {
+            $to{$qid}=$1;
+            $stat{$qid}=$2;
+            $times{$qid}=$date;
+            print YELLOW "\tstat2:\t($qid)\t$stat{$qid}\n" if $verbose;
+            if ($stat{$qid} =~ /Address (.*) does not exist at this domain/) {
+                $invalid_userids{$to{$qid}}++;
+            }
+            $transaction_completed{$qid} += 0.5;
+        }
+        if ( $data =~ /stat=(.*)/ ) {
+            $stat{$qid}=$1;
+            $times{$qid}=$date;
+            print YELLOW "\tstat3:\t($qid)\t$stat{$qid}\n" if $verbose;
+            if ( $stat{$qid} =~ /Sent.*Message accepted for delivery/) {
+                $transaction_completed{$qid} += 1;
+            }
+        }
+        if ( $data =~ /size=(.*), class/ ) {
+            $size{$qid}=$1;
+            $times{$qid}=$date;
+            print YELLOW "\tsize:\t($qid)\t$size{$qid}\n" if $verbose;
+        }
+        # change to handle IPv6
+        if ( $data =~ /to=\<.*relay=.*\[([0-9.:a-zA-Z]+)\]/ ) {
+            $to_relay{$qid}=$1;
+            $times{$qid}=$date;
+            print YELLOW "\tto_relay:\t($qid)\t$to_relay{$qid}\n" if $verbose;
+        }
+        if ( $data =~ /from=\<.*relay=.*\[([0-9.:a-zA-Z]+)\]/ ) {
+            $from_relay{$qid}=$1;
+            $times{$qid}=$date;
+            print YELLOW "\tfrom_relay:\t($qid)\t$from_relay{$qid}\n" if $verbose;
+        }
+        if ( $data =~ /makeconnection \((.*) \[IPv6:([0-9A-Za-z:]+)\]\) (.*): (.*)$/ ) {
+            my $host = $1;
+            my $ipv6 = $2;
+            $ipv6_hosts{$host}++;
+            $ipv6_addr{$ipv6}++;
+            my $ipv6_status = $3;
+            my $ipv6_reason = $4;
+        }
+        if ( $data =~ /^Milter add: header: X-Spam-Report: (.*)$/){
+            $spam_report{$qid}=$1;
+            #$spam_report{$qid} =~ s/(["*\/])/\\$1/g;
+            $spam_report{$qid} =~ s/\\n/\n/g;
+            $spam_report{$qid} =~ s/\\t/\t\t/g;
+        }
+        if ( $data =~ /^Milter add: header: X-Spam-Status: Yes, score=([0-9.]+) required=([0-9.]+) tests=(.*)$/){
+            $spam_score{$qid}=$1;
+            $required_score{$qid}=$2;
+            $spam_tests{$qid}=$3;
+            $spam_tests{$qid} =~ s/\\n/\n/g;
+            $spam_tests{$qid} =~ s/\\t/\t\t/g;
+        }
+        if ( $data =~ /^Milter change \(add\): header: X-Spam-Status: Yes, score=([0-9.]+) required=([0-9.]+) tests=(.*)$/){
+            $spam_score{$qid}=$1;
+            $required_score{$qid}=$2;
+            $spam_tests{$qid}=$3;
+            $spam_tests{$qid} =~ s/\\n/\n/g;
+            $spam_tests{$qid} =~ s/\\t/\t\t/g;
+        }
+        if ( $data =~ /([^ ] )*\[([0-9.:a-zA-Z]+)\] (\(may be forged\) )*(did not .*)/ ) {
+            $from_relay{$qid}=$2;
+            $stat{$qid}=$4;
+            $times{$qid}=$date;
+            print YELLOW "\tstat4:\t($qid)\t$stat{$qid}\n" if $verbose;
+            $transaction_completed{$qid}+=1;
+        }
+        if ( $data =~ /AUTH failure \(LOGIN\)\: .*, relay=\[([0-9.:a-zA-Z]+)\]$/ ) {
+            my $host = $1;
+            $authfailures{$host}++;
+            $lastauthfailure{$host} = $date;
+            # do something with this? These are trying to connect to relay, so they need to be blocked.
+        }
+        if ( $data =~ /AUTH failure \(LOGIN\)\: .*, relay=(.*) \[([0-9.:a-zA-Z]+)\].*$/ ) {
+            my $hostname = $1;
+            my $host = $2;
+            $authfailures{$host}++;
+            $lastauthfailure{$host} = $date;
+            # do something with this? These are trying to connect to relay, so they need to be blocked.
+        }
+        if ( $data =~ /done; delay=([0-9:]+), ntries=([0-9]+)/ ) {
+            $delay{$qid}=$1;
+            $ntries{$qid}=$2;
+            print YELLOW "\tdone;\t($qid)\t$delay{$qid}\t$ntries{$qid}\n" if $verbose;
+            $transaction_completed{$qid}+=1;
+        }
+        if ( ($transaction_completed{$qid}>=1) &&
+            !($stat{$qid} =~ /did not issue MAIL/) &&
+            !($stat{$qid} =~ /does not exist at this domain/)){
+            print WHITE, "\n";
+            print WHITE, "($transaction_completed{$qid}) $qid ";
+            #print WHITE, "$qid " if $verbose;
+            print WHITE, "$times{$qid} " if exists($times{$qid});
+            print GREEN, "$ip_addr{$qid} " if exists($ip_addr{$qid});
+            print GREEN, "[$from_relay{$qid}] " if exists $from_relay{$qid};
+            print GREEN, "-> " if exists($to_relay{$qid}) && exists($from_relay{$qid});;
+            print GREEN, "[$to_relay{$qid}] " if exists $to_relay{$qid};
+            print CYAN, "$from{$qid} -> " if exists $from{$qid};
+            print CYAN, "$to{$qid} " if exists $to{$qid};
+            print CYAN, "($size{$qid} bytes) " if exists $size{$qid};
+            print GREEN, "$stat{$qid}" if exists $stat{$qid};
+            if ( exists($spam_score{$qid}) ) {
+                print " $spam_score{$qid}/$required_score{$qid}";
+                if ( exists($spam_report{$qid}) ) {
+                    print YELLOW, "$spam_report{$qid}" if $reports;
+                } else {
+                    print YELLOW, "\n\t\t$spam_tests{$qid}" if $reports;
+                }
+            print "\n", RESET;
+            # remove the objects ?
+            }
+        }
+    }
+}
+
+sub make_iptable {
+    # make an iptable. called with ($iptable_name)
+    # returns an array of the hosts in the iptable rule
+    my $iptable = shift;
+    my $iptable_exists  =`/sbin/iptables -n -L $iptable`;
+    chomp $iptable_exists;
+    my @hosts;
+    if ( $iptable_exists eq "" ) {
+        print GREEN, "$iptable doesn't exist.  Creating now...", RESET;
+        system "/sbin/iptables -N $iptable";
+        system "/sbin/iptables -A INPUT -p all -j $iptable"; # added to INPUT chain
+        print "\n";
+    } else {
+        print GREEN, "$iptable exists.  Reading in entries now...\n", RESET;
+        my @rules = `/sbin/iptables -n -L $iptable`;
+        my $result = `/sbin/iptables -F $iptable_name`; # flush the table
+        foreach my $rule (@rules) {
+            chomp $rule;
+            print BLUE, "\t$rule\n", RESET if $verbose;
+            if ( $rule =~ /^REJECT\s+tcp\s+[-]+\s+([0-9.]+)\s+([0-9.\/]+)\s+(.*)$/ ) {
+                my $source=$1;
+                my $dest=$2;
+                push @hosts, $source;
+                print GREEN, "\tiptable entry: $source\n", RESET;
+            }
+        }
+    }
+    return @hosts;
+}
+sub add_host_to_iptable {
+    # sub to add a host to an iptable
+    my $iptable_name = shift;
+    my $host = shift;
+    $host =~ s/[\[\]]+//g; # remove any brackets
+    my $cmd = "/sbin/iptables -A $iptable_name -p tcp -s $host -j DROP";
+    print "$cmd";
+    my $result = `$cmd`;
+    #/sbin/iptables -v -t filter -A $iptable_name -p all -s $host  -j REJECT --reject-with icmp-host-prohibited`;
+    return $result;
+}
+package connecting_host;
+sub new {
+    my $class = shift;
+    my $self = {
+        pid => shift, # five digit PID
+        ipaddr => shift, # ip address
+        hostname =>shift, # hostname
+        attempts => shift, # how many times
+    };
+    bless $self, $class;
+    return $self;
+}
+
+package mail_transaction;
+sub new {
+    my $class = shift;
+    my $self = {
+        pid => shift, # 14 digit PID
+    };
+    bless $self, $class;
+    return $self;
+}
+
+package IMAP_Connection;
+# An object for each imap connection
+sub new {
+    my $class = shift;
+    my $self = {
+        pid => shift, # five digit PID
+        host => "", # ip address
+        hostname => "", # hostname
+        user => "", # userid used
+        mech => "", # mech, usually CRAM-MD5
+        ssl => 0, # ssl connection
+        ssl_error => "", # error message
+        login => 0, #login status
+        logout => 0, # logout status
+        complete => 0 # transaction is complete
+    };
+    bless $self, $class;
+    return $self;
+}

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+OLD_LOGS="mail/.logs"
+NEW_LOGS=".procmail_logs"
+USERS=`ls /home`
+for USER in $USERS
+do
+	echo "processing user:$USER"
+	if [ -d /home/$USER/$OLD_LOGS ]
+	then
+		echo -e "\tMoving $USER's logs from $OLD_LOGS to $NEW_LOGS..."
+		echo -e "\tmv /home/$USER/$OLD_LOGS /home/$USER/$NEW_LOGS"
+		mv /home/$USER/$OLD_LOGS /home/$USER/$NEW_LOGS
+	fi
+done

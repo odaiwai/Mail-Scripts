@@ -1,0 +1,131 @@
+#!/usr/bin/perl -w 
+#use strict
+
+@files=`ls -r /var/log/maillog*`;
+#@files=`ls -r /var/log/maillog`;
+my $connect=0;
+my $userids=0;
+my $domains=0;
+my $mailers=0;
+my $logfile="";
+
+for $logfile (@files) {
+	@lines=`cat $logfile`;
+	for (@lines) {
+		#$date=s/$_
+		#print;
+		#$age=
+		#Count connections
+		if (/NOQUEUE\: connect from ([a-zA-Z0-9.-]*) (\[[0-9]+\.[0-9]+\.[0-9]\.[0-9]+\])/) {
+			$host="\L$1";
+			$connect++;
+			#detect the originating IP
+			$origins{$host}++;
+			$ips{$2}++;
+		}
+		#count email addresses note that this won't count internal only mails
+		if (/to=[<]*([a-zA-Z0-9.-]*)\@(diaspoir\.net)\>/) {
+			#get the lhs of the email address and incr the number of emails that person got.
+			$userid="\L$1";
+			$userids{$userid}++;
+		}
+		# Count mailers used for each userid
+		if (/to=[<]([a-zA-Z0-9.-]*)\@(diaspoir\.net).*mailer\=([a-zA-Z0-9]*)/) {
+			$userid="\L$1";
+			$domain="\L$2";
+			$mailer="\L$3";
+			$mailers{$mailer}++;
+			$userid_mailers{$userid}->{$mailer}++;
+		}
+		#Count up the sending status
+		if (/to=[<]([a-zA-Z0-9.-]*)\@(diaspoir\.net).*Stat\=([a-zA-Z0-9]*)/) {
+			$userid="\L$1";
+			$domain="\L$2";
+			$stat="\L$3";
+			$stats{$stat}++;
+			$userid_stats{$userid}->{$stat}++;
+		}
+		if (/to=([a-zA-Z0-9.-]*)\@(diaspoir\.net).*Stat\=([a-zA-Z0-9]*)/) {
+			$userid="\L$1";
+			$domain="\L$2";
+			$stat="\L$3";
+			$stats{$stat}++;
+			$userid_stats{$userid}->{$stat}++;
+		}
+		if (/reject\=([0-9]*)/) {
+			$code="\L$1";
+			$rejected++;
+			$rejected{$code}++;
+		}
+		if (/DNSBL\=([0-9a-zA-Z.-]*)/) {
+			$code="\L$1";
+			$dnsbl++;
+			$dnsbl{$code}++;
+		}
+		if (/to=[<]([a-zA-Z0-9.-]*)\@(diaspoir\.net).*denied\=([0-9]*)/) {
+			$userid="\L$1";
+			$domain="\L$2";
+			$code="\L$3";
+			$rejected++;
+			$rejected{$code}++;
+			$userid_rejected{$userid}->{$code}++;
+		}
+	}
+}	
+#only email to tokai address is rejected or discarded *at* *this* *time*
+#$all_tokai_legit=$all_tokai-$all_rejected-$all_discarded;
+
+#spam detected is = relays minus procmails, as each spam generates an email 
+#to root@ufjia.com.procmail. which bypasses procmail.
+#$all_spam=$all_relay-$all_procmail;
+
+print "<div class='body'>";
+print "<h1 id='intro'>Introduction</h1>";
+print "<div class='textbox'>\n";
+
+$base=$connect;
+print "<table>";
+print "<p>The following connections have been made over the duration of the log files:\n";
+print "<tr><th>Connections</th><th>Percentage</th></tr>\n";
+print "<tr><td>$connect</td><td>",int($connect/$base*100) ,"%</td></tr>\n";
+print "</table>\n";
+print "</div>\n";
+
+print "<p class='heading'>Individual email addresses</h1>\n";
+
+#print the address hashes:
+print "<table><tr>\n";
+print '<th>userid</th>';
+print '<th>count</th>';
+for $userid (sort keys %userids) {
+	print "<tr>\n";
+	print "\t<th>",$userid,"</th>\n";
+	print "\t<td>",$userids{$userid},"</td>\n";
+	for $stat (sort keys %stats) {	
+		if (exists $userif_stats{$userid}->{$stat}) {
+			print "\t\t<td>",$userid_stats{$userid}->{$stat},"</td>\n";
+		}
+		else {
+			print "<td> - </td>\n";
+		}
+	}
+	for $mailer (sort keys %mailers) {
+		if (exists $userif_mailers{$userid}->{$mailer}) {
+			print "\t\t<td>",$userid_mailers{$userid}->{$mailer},"</td>\n";
+		}
+		else {
+			print "<td> - </td>\n";
+		}
+	}
+	#for $code (sort keys %codes) {	
+	#	print "\t\t<td>",$userid_rejected{$userid}->{$code},"</td>\n";
+	#}
+	#for $dnsbl (sort keys %dnsbls) {	
+	#	print "\t\t<td>",$userid_dnsbl{$userid}->{$dnsbl},"</td>\n";
+	#}
+	print "</tr>\n";
+}
+print "</div>\n";
+print "</table>\n";
+print "</body>\n";
+print "</html>\n";

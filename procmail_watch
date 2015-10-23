@@ -1,0 +1,24 @@
+#!/usr/bin/perl -w
+use strict;
+
+# script to parse the procmail logs of the invoking user (or all, if root) and
+# produce a table of which mails came in, their To:, From: Subject: and other info as appropriate.
+
+# work out who invoked the program and determine which folders to scan based on that
+my $user = system("whoami");
+
+#if ( $user = "root") {
+#	my @users = system "cd /home && ls";
+#} else {
+#	my @users = $user;
+#}
+
+my $thismonth=
+my @logs = system ("tree -if /home/$user/mail/logs/");
+
+
+
+
+# read in the current and previous months procmail logs
+# build a hash from the procmail logs
+# present the hash in time order to the invoker.

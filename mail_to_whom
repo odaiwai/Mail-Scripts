@@ -1,0 +1,101 @@
+#!/usr/bin/perl
+#use TERM::ANSIColor qw(:constants);
+use Time::Local;
+use strict;
+
+#script to scoot throught the mail logs and tally up mail to and from everyone.
+# for last 24 hours, last week, last month, total over log period
+# 0 for quiet operation, 1 for noisy.
+my $verbose=0;
+
+my @logfiles=`ls -t /var/log/maillog*`;
+
+
+my %mail_from;
+my %rcpt_to;
+my %rejected_to;
+my %userid;
+my %domain;
+my %months=( "Jan"=>0, "Feb"=>1, "Mar"=>2, "Apr"=>3, "May"=>4, "Jun"=>5, 
+	     "Jul"=>6, "Aug"=>7, "Sep"=>8, "Oct"=>9, "Nov"=>10, "Dec"=>11 );
+my %timestamp;
+my $year = `date +%Y`;
+my $runtime=`date +%s`;
+my $last_day=$runtime-86400;
+my $last_week=$runtime-604800;
+my $last_month=$runtime-2592000;
+#print "Running time is $runtime\n";
+foreach my $log (@logfiles) {
+	chomp $log;
+	#print "$log...";
+	open LOG,"<$log";
+	while (my $line=<LOG>) {
+		chomp $line;
+		my ($month, $day, $time, $relay, $app, $data) = split /\s+/, $line, 6;
+		my $mnum=$months{$month};
+		if ($app =~ /sendmail/) {
+			my $period;
+			print "$month, $day, $time, $relay, $app, $data\n" if $verbose;
+			my ($qid, $msg_info) = split /\s+/, $data, 2;
+			$qid=~s/://;
+			print "\t$qid, $msg_info\n" if $verbose;
+			my ($hours, $minutes, $seconds) = split /:+/, $time;
+
+			#get the timestamp for this email in seconds
+			my $timestamp=timelocal($seconds, $minutes, $hours, $day, $mnum, $year-1900);
+			if ($timestamp>$runtime) {
+				print "$timestamp{$qid} in the future!  Assuming " if $verbose;
+				$timestamp=timelocal($seconds, $minutes, $hours, $day, $mnum, $year-1901);
+				print "$timestamp{$qid} \n" if $verbose;
+			}
+			if ( $timestamp < $last_month ) { $period=3;}
+			if ( $timestamp >= $last_month ) { $period=2; }
+			if ( $timestamp >= $last_week ) { $period=1; }
+			if ( $timestamp >= $last_day ) { $period=0; }
+		
+			#if ($msg_info =~ /from\=[<]+([a-zA-Z0-9_= *+.-]*@[a-zA-Z0-9_.-]*)[>]+, size\=([0-9]+), class\=([0-9-]+)/) {
+			#	print "\t\t $1, $2, $3, $4\n" if $verbose;
+			#	my $userid="\L$1";
+			#	$mail_from{$userid}{$period}++;
+			#	$userid{$userid}=1;
+			#}
+			if ($msg_info =~ /to\=[<]+([a-zA-Z0-9_=*+.-]*@[a-zA-Z0-9_.-]*)[>]+.*stat\=(.*)$/) {
+				print "\t\t $1, $2, $3\n" if $verbose;
+				my $userid="\L$1";
+				$rcpt_to{$userid}{$period}++;
+				$userid{$userid}=1;
+			}
+			if ($msg_info =~ /arg1\=[<]+([a-zA-Z0-9_=*+.-]*@[a-zA-Z0-9_.-]*)[>]+.*reject\=([0-9]*)(.*)$/) {
+				print "\t\t $1, $2, $3, $4\n" if $verbose;
+				my $userid="\L$1";
+				$rejected_to{$userid}{$period}++;
+				$userid{$userid}=1;
+			}
+		}
+	}
+	print "\n";
+}
+
+print "<html>\n<head></head>\n<body>\n";
+print "<table border='1'>\n";
+print "<tr><th>userid</th>";
+print "<th>Today: rcpt_to</th>";
+print "<th>Today: reject</th>";
+print "<th>Week: rcpt_to</th>";
+print "<th>Week: reject</th>";
+print "<th>Month: rcpt_to</th>";
+print "<th>Month: reject</th>";
+print "<th>Total: rcpt_to</th>";
+print "<th>Total: reject</th></tr>\n";
+
+foreach my $userid (sort keys %userid) {
+	print "<tr><th>$userid</th>";
+	for ( my $period=0; $period < 4; $period++) {
+		print "<td>$rcpt_to{$userid}{$period}</td>";
+		print "<td>$rejected_to{$userid}{$period}</td>";
+	}
+	print "</tr>\n";
+}
+
+print "<table>\n";
+print "</body>\n</html>\n";
