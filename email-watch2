@@ -23,7 +23,8 @@ my $version="v2.1.0";
 my @options = @ARGV;
 my $verbose = 0;
 my $reports = 0;
-my $show_imap_stats = 1;
+my $report_auth_failure = 0;
+my $show_imap_stats = 0;
 my $all = 0;
 my $last = 0;
 print "Options:\n";
@@ -81,6 +82,7 @@ my %imap_connections;
 my %services;
 my %ipv6_addr;
 my %ipv6_hosts;
+my %authids;
 
 # Setup the iptables rule if required:
 my $iptable_name = "SMTP_REJECT";
@@ -138,17 +140,26 @@ foreach my $host (sort keys %connecting_hosts){
 }
 
 # report on the auth failures
-print "Authentication failures:\n";
-foreach my $host (sort {$lastauthfailure{$a} cmp $lastauthfailure{$b} } keys %authfailures) {
-    if (exists($authfailures{$host})) {
-        #if ($invalid_userids{$userid} > 1) {
-            print "\t$authfailures{$host} authentication failures from $host. Last at $lastauthfailure{$host}.\n";
-        #add_host_to_iptable($iptable_name, $host);
-        my $cmd = "sendmail : $host : spawn /usr/bin/echo \"IP Address blocked on for unauthorised access attempts\"";
-        #print "$cmd\n";
-        my $result = `sudo echo "$cmd" >> /etc/hosts.deny`;
-        #print "\n";
-        #}
+if ( $report_auth_failure == 1 ) {
+    print "Authentication failures:\n";
+    foreach my $host (sort {$lastauthfailure{$a} cmp $lastauthfailure{$b} } keys %authfailures) {
+        if (exists($authfailures{$host})) {
+            #if ($invalid_userids{$userid} > 1) {
+                print "\t$authfailures{$host} authentication failures from $host. Last at $lastauthfailure{$host}.\n";
+            #add_host_to_iptable($iptable_name, $host);
+            my $cmd = "sendmail : $host : spawn /usr/bin/echo \"IP Address blocked on for unauthorised access attempts\"";
+            #print "$cmd\n";
+            my $result = `sudo echo "$cmd" >> /etc/hosts.deny`;
+            #print "\n";
+            #}
+        }
+    }
+}
+# report on the authid instances
+print "AUTHID issues:\n";
+foreach my $authid (keys %authids){
+    if (exists($authids{$authid})) {
+        print "\tauthid connections as $authid $authids{$authid}\n";
     }
 }
 
@@ -350,6 +361,14 @@ sub parse_5_digit_pid() {
             my $ip_addr = $1;
             $rejected_hosts{$ip_addr}++;
             #print "Rejected Hosts $ip_addr, $rejected_hosts{$ip_addr}\n";
+        }
+        # monitor authentication sucesses
+        if ( $data =~ /AUTH=server, relay=(.*) \[([0-9.:a-zA-Z]+)\].*, authid=(.*), mech=(.*), bits=0/) {
+            my $relay = $1;
+            my $ip_addr = $2;
+            my $authid = $3;
+            my $mech = $4;
+            $authids{$authid}++;
         }
     }
 }
