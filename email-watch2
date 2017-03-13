@@ -364,13 +364,18 @@ sub parse_5_digit_pid() {
         }
         # monitor authentication sucesses
         if ( $data =~ /AUTH=server, relay=(.*) \[([0-9.:a-zA-Z]+)\].*, authid=(.*), mech=(.*), bits=0/) {
-            my $relay = $1;
+            my $hostname = $1;
             my $ip_addr = $2;
             my $authid = $3;
             my $mech = $4;
             $authids{$authid}++;
-        }
-    }
+        } elsif ( $data =~ /AUTH=server, relay=\[([0-9.:a-zA-Z]+)\].*, authid=(.*), mech=(.*), bits=0/) {
+            my $ip_addr = $1;
+            my $authid = $2;
+            my $mech = $3;
+            $authids{$authid}++;
+        } 
+	}
 }
 
 sub parse_14_digit_pid() {
