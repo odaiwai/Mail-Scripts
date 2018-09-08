@@ -29,8 +29,8 @@ foreach my $file (@files) {
         if ($line =~ /^#/) {
             # comment - preserve in place
             push @outputs, $line;
-        } else {
-            my @matches = lc($line) =~ /^([a-z0-9]+) : ([0-9.\/]+)( : (.*))*$/;
+        } 
+		if (  lc($line) =~ /^([a-z0-9]+) : ([0-9.\/]+)( : (.*))*$/i ) {;
             #print "\tMatches: $#matches\n" if $verbose;
             my $service = $1;
             my $ipaddr = $2;
