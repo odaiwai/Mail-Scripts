@@ -76,6 +76,7 @@ my %imap_connects;
 my %imaps_connects;
 my %auth_imap_users;
 my %unauth_imap_users;
+my %unauth_imap_hosts;
 my %mechs;
 my %users_by_ip;
 my %imap_connections;
@@ -124,6 +125,16 @@ foreach my $userid (sort keys %invalid_userids) {
     }
 }
 
+# This might be overzealous, and target all non compliant IMAP clients
+foreach my $host (sort keys %unauth_imap_hosts) {
+    if (exists($unauth_imap_hosts{$host})) {
+        if ($unauth_imap_hosts{$host} > 10) {
+            print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host\n";
+			#my $result = add_host_to_iptable($iptable_name, $host)
+        }
+    }
+}
+
 # report on the connecting Hosts
 my $limit = 100;
 print "Hosts with more than $limit connections:\n";
@@ -134,7 +145,7 @@ foreach my $host (sort keys %connecting_hosts){
             if (exists($rejected_hosts{$host})) {
                 print "Host rejected $rejected_hosts{$host} times.";
             }
-            #add_host_to_iptable($iptable_name, $host);
+            add_host_to_iptable($iptable_name, $host);
             print "\n";
         }
     }
@@ -325,6 +336,7 @@ sub parse_5_digit_pid() {
             my $hostname = $2;
             my $host = $3;
             $unauth_imap_users{$user}++;
+            $unauth_imap_hosts{$host}++;
             $users_by_ip{$user.".".$host}++;
         }
 
@@ -557,28 +569,30 @@ sub make_iptable {
     # make an iptable. called with ($iptable_name)
     # returns an array of the hosts in the iptable rule
     my $iptable = shift;
-    my $iptable_exists  =`/sbin/iptables -n -L $iptable`;
-    chomp $iptable_exists;
+	my $iptable_exists  = `/sbin/iptables -n -L $iptable`;
+	chomp $iptable_exists;
     my @hosts;
     if ( $iptable_exists eq "" ) {
         print GREEN, "$iptable doesn't exist.  Creating now...", RESET;
-        system "/sbin/iptables -N $iptable";
-        system "/sbin/iptables -A INPUT -p all -j $iptable"; # added to INPUT chain
+        `/sbin/iptables -N $iptable`;
+        `/sbin/iptables -A INPUT -j $iptable`; # added to INPUT chain
+        `/sbin/iptables -A OUTPUT -j $iptable`; # added to INPUT chain
+        `/sbin/iptables -A FORWARD -j $iptable`; # added to INPUT chain
         print "\n";
     } else {
-        print GREEN, "$iptable exists.  Reading in entries now...\n", RESET;
+        print GREEN, "$iptable exists.  Flush the entries now...\n", RESET;
         my @rules = `/sbin/iptables -n -L $iptable`;
         my $result = `/sbin/iptables -F $iptable_name`; # flush the table
-        foreach my $rule (@rules) {
-            chomp $rule;
-            print BLUE, "\t$rule\n", RESET if $verbose;
-            if ( $rule =~ /^REJECT\s+tcp\s+[-]+\s+([0-9.]+)\s+([0-9.\/]+)\s+(.*)$/ ) {
-                my $source=$1;
-                my $dest=$2;
-                push @hosts, $source;
-                print GREEN, "\tiptable entry: $source\n", RESET;
-            }
-        }
+		#foreach my $rule (@rules) {
+		#    chomp $rule;
+		#    print BLUE, "\t$rule\n", RESET if $verbose;
+		#    if ( $rule =~ /^REJECT\s+tcp\s+[-]+\s+([0-9.]+)\s+([0-9.\/]+)\s+(.*)$/ ) {
+		#        my $source=$1;
+		#        my $dest=$2;
+		#        push @hosts, $source;
+		#        print GREEN, "\tiptable entry: $source\n", RESET;
+		#    }
+		#}
     }
     return @hosts;
 }
@@ -587,12 +601,14 @@ sub add_host_to_iptable {
     my $iptable_name = shift;
     my $host = shift;
     $host =~ s/[\[\]]+//g; # remove any brackets
-    my $cmd = "/sbin/iptables -A $iptable_name -p tcp -s $host -j DROP";
-    print "$cmd";
+    my $cmd = "/sbin/iptables -A $iptable_name -s $host -j LOG --log-prefix \"SMTP Reject \"";
+    $cmd .= "; /sbin/iptables -A $iptable_name -s $host -j DROP ";
+    print "$cmd" if $verbose;
     my $result = `$cmd`;
     #/sbin/iptables -v -t filter -A $iptable_name -p all -s $host  -j REJECT --reject-with icmp-host-prohibited`;
     return $result;
 }
+
 package connecting_host;
 sub new {
     my $class = shift;
