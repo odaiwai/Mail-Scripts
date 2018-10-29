@@ -578,13 +578,14 @@ sub make_iptable {
         print GREEN, "$iptable doesn't exist.  Creating now...", RESET if !($silent);
         `/sbin/iptables -N $iptable`;
         `/sbin/iptables -I INPUT -j $iptable`; # added to INPUT chain
-        `/sbin/iptables -I OUTPUT -j $iptable`; # added to INPUT chain
-        `/sbin/iptables -I FORWARD -j $iptable`; # added to INPUT chain
+        #`/sbin/iptables -I OUTPUT -j $iptable`; # added to INPUT chain
+		#`/sbin/iptables -I FORWARD -j $iptable`; # added to INPUT chain
         print "\n" if !($silent);
     } else {
         print GREEN, "$iptable exists.  Flush the entries now...\n", RESET if !($silent);
-        my @rules = `/sbin/iptables -n -L $iptable`;
         my $result = `/sbin/iptables -F $iptable_name`; # flush the table
+
+		#my @rules = `/sbin/iptables -n -L $iptable`;
 		#foreach my $rule (@rules) {
 		#    chomp $rule;
 		#    print BLUE, "\t$rule\n", RESET if $verbose;
@@ -604,7 +605,7 @@ sub add_host_to_iptable {
     my $host = shift;
     $host =~ s/[\[\]]+//g; # remove any brackets
 	#my $cmd = "/sbin/iptables -A $iptable_name -s $host -j LOG --log-prefix \"SMTP Reject \"";
-    my $cmd = "/sbin/iptables -A $iptable_name -s $host -j DROP ";
+    my $cmd = "/sbin/iptables -A $iptable_name -p tcp -s $host -j DROP ";
     print "$cmd" if $verbose;
     my $result = `$cmd`;
     #/sbin/iptables -v -t filter -A $iptable_name -p all -s $host  -j REJECT --reject-with icmp-host-prohibited`;
