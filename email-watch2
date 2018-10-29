@@ -23,24 +23,30 @@ my $version="v2.1.0";
 my @options = @ARGV;
 my $verbose = 0;
 my $reports = 0;
+my $silent = 0;
 my $report_auth_failure = 0;
 my $show_imap_stats = 0;
 my $all = 0;
 my $last = 0;
-print "Options:\n";
+
+#print "Options:\n" if !$silent;
 foreach my $option (@options) {
     chomp $option;
-    print "\t$option\n";
-    if ( $option eq "verbose" ) {$verbose=1;}
-    if ( $option eq "reports" ) {$reports=1;}
-    if ( $option eq "all" ) {$all=1;}
-    if ( $option eq "last" ) {$last=1;}
+    if ( $option eq "verbose" ) { $verbose=1; }
+    if ( $option eq "reports" ) { $reports=1; }
+    if ( $option eq "all" )     { $all=1; }
+    if ( $option eq "last" )    { $last=1; }
+    if ( $option eq "silent" )  { $silent=1; $verbose = 0; }
+    print "\t$option\n" if !$silent;
 }
 
-my @logs=("/var/log/maillog.1.gz", "/var/log/maillog.1", "/var/log/maillog");
-if ( $all==1) { @logs=`ls /var/log/maillog*`;}
-if ( $last==1) { @logs=("/var/log/maillog.4.gz", "/var/log/maillog.3.gz", "/var/log/maillog.2.gz", "/var/log/maillog.1.gz", "/var/log/maillog");}
-#my @logs=`ls /var/log/maillog`;
+# How many log files are we weading in?
+my $numlogs = 2;                      # Last week, with weekly rotation
+if ( $all  == 1 ) { $numlogs = 999; } # All files
+if ( $last == 1 ) { $numlogs = 5;   } # Last month, with weekly rotation
+my @logs = `ls -tr /var/log/maillog* | tail -$numlogs`;
+
+# declare the various arrays, hashes needed
 my %times;
 my %timestamp;
 my %from;
@@ -93,34 +99,27 @@ my @iptables_hosts = make_iptable($iptable_name);
 # Parse the log files first
 foreach my $log (@logs) {
     chomp $log;
-    # should replace this with a while $fh {} to start parsing faster
-    #my @lines;
-    #if ( $log =~ /\.gz$/) {
-    #    @lines=`gunzip -c $log`;
-    #} else {
-    #    @lines=`cat $log`;
-    #}
     my $logfh;
     if ( $log =~ /\.gz$/){
-        open ($logfh, "-|", "gunzip -c $log");
+        open ($logfh, "-|", "gunzip -c $log") or die "Can't open $log: $!";
     } else {
-        open ($logfh,"<", $log);
+        open ($logfh,"<", $log) or die "Can't open $log: $!";
     }
     while (my $line=<$logfh>) {
         chomp $line;
         print GREEN, "$line\n" if $verbose;
-        parse_5_digit_pid($log, $line);
-        parse_14_digit_pid($log, $line);
+        my $result = parse_5_digit_pid($log, $line);
+		$result    = parse_14_digit_pid($log, $line);
     }
     close $logfh;
 }
-print "\n";
+print "\n" if !$silent;
 
 # report on the invalid usernames
 foreach my $userid (sort keys %invalid_userids) {
     if (exists($invalid_userids{$userid})) {
         if ($invalid_userids{$userid} > 1) {
-            print "\t$invalid_userids{$userid} attempts to deliver to $userid\n";
+            print "\t$invalid_userids{$userid} attempts to deliver to $userid\n" if !$silent;
         }
     }
 }
@@ -129,7 +128,7 @@ foreach my $userid (sort keys %invalid_userids) {
 foreach my $host (sort keys %unauth_imap_hosts) {
     if (exists($unauth_imap_hosts{$host})) {
         if ($unauth_imap_hosts{$host} > 10) {
-            print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host\n";
+            print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host\n" if !$silent;
 			#my $result = add_host_to_iptable($iptable_name, $host)
         }
     }
@@ -137,22 +136,22 @@ foreach my $host (sort keys %unauth_imap_hosts) {
 
 # report on the connecting Hosts
 my $limit = 100;
-print "Hosts with more than $limit connections:\n";
+print "Hosts with more than $limit connections:\n" if !$silent;
 foreach my $host (sort keys %connecting_hosts){
     if (exists($connecting_hosts{$host})) {
         if ($connecting_hosts{$host} > $limit ) {
-            print "\t$connecting_hosts{$host} connections from $host. Last at $lastconnection{$host}. ";
+            print "\t$connecting_hosts{$host} connections from $host. Last at $lastconnection{$host}. " if !$silent;
             if (exists($rejected_hosts{$host})) {
-                print "Host rejected $rejected_hosts{$host} times.";
+                print "Host rejected $rejected_hosts{$host} times." if !$silent;
             }
             add_host_to_iptable($iptable_name, $host);
-            print "\n";
+            print "\n" if !$silent;
         }
     }
 }
 
 # report on the auth failures
-if ( $report_auth_failure == 1 ) {
+if ( $report_auth_failure == 1  and !$silent) {
     print "Authentication failures:\n";
     foreach my $host (sort {$lastauthfailure{$a} cmp $lastauthfailure{$b} } keys %authfailures) {
         if (exists($authfailures{$host})) {
@@ -168,10 +167,10 @@ if ( $report_auth_failure == 1 ) {
     }
 }
 # report on the authid instances
-print "AUTHID issues:\n";
+print "AUTHID issues:\n" if !$silent;
 foreach my $authid (keys %authids){
     if (exists($authids{$authid})) {
-        print "\tauthid connections as $authid $authids{$authid}. Last on $lastauthidconnection{$authid}.\n";
+        print "\tauthid connections as $authid $authids{$authid}. Last on $lastauthidconnection{$authid}.\n" if !$silent;
     }
 }
 
@@ -181,7 +180,7 @@ foreach my $authid (keys %authids){
 my $result = `manage_hosts_deny.pl`;
 
 # report on the imap stats
-if ($show_imap_stats) {
+if ($show_imap_stats and !$silent) {
     print "IMAP Stats: Connections\n";
     print "IPv4 Address\timap\tSSL\t";
     foreach my $user (sort keys %auth_imap_users) {
@@ -267,7 +266,7 @@ sub by_timestamp_and_qid {
     $a cmp $b
 }
 
-sub parse_5_digit_pid() {
+sub parse_5_digit_pid {
     # Parse for the 5 digit PID (can be 4 digits too)
     my $log = shift;
     my $line = shift;
@@ -307,7 +306,7 @@ sub parse_5_digit_pid() {
         }
         if ( $data =~ /SSL error status: (.*)/) {
                 my $error = $1;
-                $imap_connections{$pid}->{ssl_error}
+                $imap_connections{$pid}->{$error}++;
         }
         #              Login user=odaiwai host=[203.145.79.159]
         if ( $data =~ /Login user\=(.*) host\=\[([0-9.]+)\]/){
@@ -391,9 +390,10 @@ sub parse_5_digit_pid() {
             $lastauthidconnection{$authid}=$date;
         }
     }
+	return 1;
 }
 
-sub parse_14_digit_pid() {
+sub parse_14_digit_pid {
     # Parse for the 5 digit PID
     my $log = shift;
     my $line = shift;
@@ -537,6 +537,7 @@ sub parse_14_digit_pid() {
             $transaction_completed{$qid}+=1;
         }
         if ( ($transaction_completed{$qid}>=1) &&
+			!($silent) &&
             !($stat{$qid} =~ /did not issue MAIL/) &&
             !($stat{$qid} =~ /does not exist at this domain/)){
             print WHITE, "\n";
@@ -563,6 +564,7 @@ sub parse_14_digit_pid() {
             }
         }
     }
+	return 1;
 }
 
 sub make_iptable {
@@ -573,14 +575,14 @@ sub make_iptable {
 	chomp $iptable_exists;
     my @hosts;
     if ( $iptable_exists eq "" ) {
-        print GREEN, "$iptable doesn't exist.  Creating now...", RESET;
+        print GREEN, "$iptable doesn't exist.  Creating now...", RESET if !($silent);
         `/sbin/iptables -N $iptable`;
-        `/sbin/iptables -A INPUT -j $iptable`; # added to INPUT chain
-        `/sbin/iptables -A OUTPUT -j $iptable`; # added to INPUT chain
-        `/sbin/iptables -A FORWARD -j $iptable`; # added to INPUT chain
-        print "\n";
+        `/sbin/iptables -I INPUT -j $iptable`; # added to INPUT chain
+        `/sbin/iptables -I OUTPUT -j $iptable`; # added to INPUT chain
+        `/sbin/iptables -I FORWARD -j $iptable`; # added to INPUT chain
+        print "\n" if !($silent);
     } else {
-        print GREEN, "$iptable exists.  Flush the entries now...\n", RESET;
+        print GREEN, "$iptable exists.  Flush the entries now...\n", RESET if !($silent);
         my @rules = `/sbin/iptables -n -L $iptable`;
         my $result = `/sbin/iptables -F $iptable_name`; # flush the table
 		#foreach my $rule (@rules) {
@@ -601,8 +603,8 @@ sub add_host_to_iptable {
     my $iptable_name = shift;
     my $host = shift;
     $host =~ s/[\[\]]+//g; # remove any brackets
-    my $cmd = "/sbin/iptables -A $iptable_name -s $host -j LOG --log-prefix \"SMTP Reject \"";
-    $cmd .= "; /sbin/iptables -A $iptable_name -s $host -j DROP ";
+	#my $cmd = "/sbin/iptables -A $iptable_name -s $host -j LOG --log-prefix \"SMTP Reject \"";
+    my $cmd = "/sbin/iptables -A $iptable_name -s $host -j DROP ";
     print "$cmd" if $verbose;
     my $result = `$cmd`;
     #/sbin/iptables -v -t filter -A $iptable_name -p all -s $host  -j REJECT --reject-with icmp-host-prohibited`;
