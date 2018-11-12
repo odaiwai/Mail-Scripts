@@ -109,7 +109,7 @@ foreach my $log (@logs) {
         chomp $line;
         print GREEN, "$line\n" if $verbose;
         my $result = parse_5_digit_pid($log, $line);
-		$result    = parse_14_digit_pid($log, $line);
+        $result    = parse_14_digit_pid($log, $line);
     }
     close $logfh;
 }
@@ -129,7 +129,7 @@ foreach my $host (sort keys %unauth_imap_hosts) {
     if (exists($unauth_imap_hosts{$host})) {
         if ($unauth_imap_hosts{$host} > 10) {
             print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host\n" if !$silent;
-			#my $result = add_host_to_iptable($iptable_name, $host)
+            #my $result = add_host_to_iptable($iptable_name, $host)
         }
     }
 }
@@ -144,7 +144,7 @@ foreach my $host (sort keys %connecting_hosts){
             if (exists($rejected_hosts{$host})) {
                 print "Host rejected $rejected_hosts{$host} times." if !$silent;
             }
-            add_host_to_iptable($iptable_name, $host);
+			my $result = add_host_to_iptable($iptable_name, $host);
             print "\n" if !$silent;
         }
     }
@@ -177,7 +177,7 @@ foreach my $authid (keys %authids){
 #report on the ipv6 activity
 
 # Manage the hosts.deny file
-my $result = `manage_hosts_deny.pl`;
+my $result = `/usr/local/bin/manage_hosts_deny.pl`;
 
 # report on the imap stats
 if ($show_imap_stats and !$silent) {
@@ -390,7 +390,7 @@ sub parse_5_digit_pid {
             $lastauthidconnection{$authid}=$date;
         }
     }
-	return 1;
+    return 1;
 }
 
 sub parse_14_digit_pid {
@@ -520,6 +520,7 @@ sub parse_14_digit_pid {
         if ( $data =~ /AUTH failure \(LOGIN\)\: .*, relay=\[([0-9.:a-zA-Z]+)\]$/ ) {
             my $host = $1;
             $authfailures{$host}++;
+            $rejected_hosts{$host}++;
             $lastauthfailure{$host} = $date;
             # do something with this? These are trying to connect to relay, so they need to be blocked.
         }
@@ -527,6 +528,7 @@ sub parse_14_digit_pid {
             my $hostname = $1;
             my $host = $2;
             $authfailures{$host}++;
+            $rejected_hosts{$host}++;
             $lastauthfailure{$host} = $date;
             # do something with this? These are trying to connect to relay, so they need to be blocked.
         }
@@ -537,7 +539,7 @@ sub parse_14_digit_pid {
             $transaction_completed{$qid}+=1;
         }
         if ( ($transaction_completed{$qid}>=1) &&
-			!($silent) &&
+            !($silent) &&
             !($stat{$qid} =~ /did not issue MAIL/) &&
             !($stat{$qid} =~ /does not exist at this domain/)){
             print WHITE, "\n";
@@ -564,38 +566,38 @@ sub parse_14_digit_pid {
             }
         }
     }
-	return 1;
+    return 1;
 }
 
 sub make_iptable {
     # make an iptable. called with ($iptable_name)
     # returns an array of the hosts in the iptable rule
     my $iptable = shift;
-	my $iptable_exists  = `/sbin/iptables -n -L $iptable`;
-	chomp $iptable_exists;
+    my $iptable_exists  = `/sbin/iptables -n -L $iptable`;
+    chomp $iptable_exists;
     my @hosts;
     if ( $iptable_exists eq "" ) {
         print GREEN, "$iptable doesn't exist.  Creating now...", RESET if !($silent);
         `/sbin/iptables -N $iptable`;
         `/sbin/iptables -I INPUT -j $iptable`; # added to INPUT chain
         #`/sbin/iptables -I OUTPUT -j $iptable`; # added to INPUT chain
-		#`/sbin/iptables -I FORWARD -j $iptable`; # added to INPUT chain
+        #`/sbin/iptables -I FORWARD -j $iptable`; # added to INPUT chain
         print "\n" if !($silent);
     } else {
         print GREEN, "$iptable exists.  Flush the entries now...\n", RESET if !($silent);
         my $result = `/sbin/iptables -F $iptable_name`; # flush the table
 
-		#my @rules = `/sbin/iptables -n -L $iptable`;
-		#foreach my $rule (@rules) {
-		#    chomp $rule;
-		#    print BLUE, "\t$rule\n", RESET if $verbose;
-		#    if ( $rule =~ /^REJECT\s+tcp\s+[-]+\s+([0-9.]+)\s+([0-9.\/]+)\s+(.*)$/ ) {
-		#        my $source=$1;
-		#        my $dest=$2;
-		#        push @hosts, $source;
-		#        print GREEN, "\tiptable entry: $source\n", RESET;
-		#    }
-		#}
+        #my @rules = `/sbin/iptables -n -L $iptable`;
+        #foreach my $rule (@rules) {
+        #    chomp $rule;
+        #    print BLUE, "\t$rule\n", RESET if $verbose;
+        #    if ( $rule =~ /^REJECT\s+tcp\s+[-]+\s+([0-9.]+)\s+([0-9.\/]+)\s+(.*)$/ ) {
+        #        my $source=$1;
+        #        my $dest=$2;
+        #        push @hosts, $source;
+        #        print GREEN, "\tiptable entry: $source\n", RESET;
+        #    }
+        #}
     }
     return @hosts;
 }
@@ -604,14 +606,28 @@ sub add_host_to_iptable {
     my $iptable_name = shift;
     my $host = shift;
     $host =~ s/[\[\]]+//g; # remove any brackets
-	#my $cmd = "/sbin/iptables -A $iptable_name -s $host -j LOG --log-prefix \"SMTP Reject \"";
+
+	# check for a local connection, and never block them
+    my $localhost = is_a_local_host($host);
+
+    #my $cmd = "/sbin/iptables -A $iptable_name -s $host -j LOG --log-prefix \"SMTP Reject \"";
     my $cmd = "/sbin/iptables -A $iptable_name -p tcp -s $host -j DROP ";
     print "$cmd" if $verbose;
-    my $result = `$cmd`;
+    my $result = `$cmd` if !$localhost;
     #/sbin/iptables -v -t filter -A $iptable_name -p all -s $host  -j REJECT --reject-with icmp-host-prohibited`;
     return $result;
 }
-
+sub is_a_local_host {
+	# return 1 if an IPv4 address is private network or localhost
+	my $host = shift;
+	my @quads = split /\./, $host;
+	my $localhost = 0;
+    if ( $host =~ /^192\.168\./ ) { $localhost = 1;}
+    if ( $host =~ /^10\./ ) { $localhost = 1;}
+    if ( $host =~ /^127\./ ) { $localhost = 1;}
+    if ( ($quads[0] == 172) and ($quads[1] > 15 and $quads[2] < 33) ) { $localhost = 1;} # not pretty, but it works
+	return $localhost;
+}
 package connecting_host;
 sub new {
     my $class = shift;
