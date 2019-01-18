@@ -574,10 +574,10 @@ sub make_iptable {
     # returns an array of the hosts in the iptable rule
     my $iptable = shift;
     # need to check if it's in the input chain?
-    my $iptable_exists  = `/sbin/iptables -n -w -L $iptable`;
+    my $iptable_exists  = `/sbin/iptables -n -L $iptable | wc -l`;
     chomp $iptable_exists;
     my @hosts;
-    if ( $iptable_exists eq "" ) {
+    if ( $iptable_exists < 1 ) {
         print GREEN, "$iptable doesn't exist.  Creating now...", RESET if !($silent);
         `/sbin/iptables -w -N $iptable`;
         `/sbin/iptables -w -I INPUT -j $iptable`; # added to INPUT chain
