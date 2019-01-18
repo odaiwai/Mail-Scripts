@@ -579,16 +579,17 @@ sub make_iptable {
     my @hosts;
     if ( $iptable_exists < 1 ) {
         print GREEN, "$iptable doesn't exist.  Creating now...", RESET if !($silent);
-        `/sbin/iptables -w -N $iptable`;
-        `/sbin/iptables -w -I INPUT -j $iptable`; # added to INPUT chain
+        my $result = `/sbin/iptables -w -D INPUT -j $iptable`; # removed from INPUT chain
+        #$result = `/sbin/iptables -w -D FORWARD -j $iptable`; # removed from FORWARD chain
+        $result = `/sbin/iptables -w -F $iptable_name`; # flush the table and delete
+        $result = `/sbin/iptables -w -X $iptable_name`; # flush the table and delete
+        $result = `/sbin/iptables -w -N $iptable`;      # add it again
+        $result = `/sbin/iptables -w -I INPUT -j $iptable`; # added to INPUT chain
         #`/sbin/iptables -I FORWARD -j $iptable`; # added to INPUT chain
         print "\n" if !($silent);
     } else {
         print GREEN, "$iptable exists.  Flush the entries now...\n", RESET if !($silent);
-        my $result = `/sbin/iptables -w -D INPUT -j $iptable`; # removed from INPUT chain
-        $result = `/sbin/iptables -w -D FORWARD -j $iptable`; # removed from FORWARD chain
-        $result = `/sbin/iptables -w -F $iptable_name`; # flush the table
-        $result = `/sbin/iptables -w -X $iptable_name`; # flush the table
+        my $result = `/sbin/iptables -w -F $iptable_name`; # flush the table
 
         #my @rules = `/sbin/iptables -n -w -L $iptable`;
         #foreach my $rule (@rules) {
