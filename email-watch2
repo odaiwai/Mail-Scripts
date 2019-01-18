@@ -135,7 +135,7 @@ foreach my $host (sort keys %unauth_imap_hosts) {
 }
 
 # report on the connecting Hosts
-my $limit = 100;
+my $limit = 25;
 print "Hosts with more than $limit connections:\n" if !$silent;
 foreach my $host (sort keys %connecting_hosts){
     if (exists($connecting_hosts{$host})) {
@@ -573,21 +573,24 @@ sub make_iptable {
     # make an iptable. called with ($iptable_name)
     # returns an array of the hosts in the iptable rule
     my $iptable = shift;
-    my $iptable_exists  = `/sbin/iptables -n -L $iptable`;
+    # need to check if it's in the input chain?
+    my $iptable_exists  = `/sbin/iptables -n -w -L $iptable`;
     chomp $iptable_exists;
     my @hosts;
     if ( $iptable_exists eq "" ) {
         print GREEN, "$iptable doesn't exist.  Creating now...", RESET if !($silent);
-        `/sbin/iptables -N $iptable`;
-        `/sbin/iptables -I INPUT -j $iptable`; # added to INPUT chain
-        #`/sbin/iptables -I OUTPUT -j $iptable`; # added to INPUT chain
+        `/sbin/iptables -w -N $iptable`;
+        `/sbin/iptables -w -I INPUT -j $iptable`; # added to INPUT chain
         #`/sbin/iptables -I FORWARD -j $iptable`; # added to INPUT chain
         print "\n" if !($silent);
     } else {
         print GREEN, "$iptable exists.  Flush the entries now...\n", RESET if !($silent);
-        my $result = `/sbin/iptables -F $iptable_name`; # flush the table
+        my $result = `/sbin/iptables -w -D INPUT -j $iptable`; # removed from INPUT chain
+        $result = `/sbin/iptables -w -D FORWARD -j $iptable`; # removed from FORWARD chain
+        $result = `/sbin/iptables -w -F $iptable_name`; # flush the table
+        $result = `/sbin/iptables -w -X $iptable_name`; # flush the table
 
-        #my @rules = `/sbin/iptables -n -L $iptable`;
+        #my @rules = `/sbin/iptables -n -w -L $iptable`;
         #foreach my $rule (@rules) {
         #    chomp $rule;
         #    print BLUE, "\t$rule\n", RESET if $verbose;
@@ -611,10 +614,10 @@ sub add_host_to_iptable {
     my $localhost = is_a_local_host($host);
 
     #my $cmd = "/sbin/iptables -A $iptable_name -s $host -j LOG --log-prefix \"SMTP Reject \"";
-    my $cmd = "/sbin/iptables -A $iptable_name -p tcp -s $host -j DROP ";
+    my $cmd = "/sbin/iptables -w -A $iptable_name -p tcp -s $host -j DROP ";
     print "$cmd" if $verbose;
     my $result = `$cmd` if !$localhost;
-    #/sbin/iptables -v -t filter -A $iptable_name -p all -s $host  -j REJECT --reject-with icmp-host-prohibited`;
+    #/sbin/iptables -w -v -t filter -A $iptable_name -p all -s $host  -j REJECT --reject-with icmp-host-prohibited`;
     return $result;
 }
 sub is_a_local_host {
