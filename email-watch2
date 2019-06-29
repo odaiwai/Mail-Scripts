@@ -32,6 +32,7 @@ my $last = 0;
 #print "Options:\n" if !$silent;
 foreach my $option (@options) {
     chomp $option;
+	$option =~ s/\-+//g;
     if ( $option eq "verbose" ) { $verbose=1; }
     if ( $option eq "reports" ) { $reports=1; }
     if ( $option eq "all" )     { $all=1; }
@@ -92,6 +93,11 @@ my %ipv6_hosts;
 my %authids;
 my %lastauthidconnection;
 
+# Users allowed to use IMAP
+my $allowed_imap_users = allowed_users(); # reference to a hash
+my %allowed_imap_users = %$allowed_imap_users;
+
+
 # Setup the iptables rule if required:
 my $iptable_name = "SMTP_REJECT";
 my @iptables_hosts = make_iptable($iptable_name);
@@ -128,14 +134,21 @@ foreach my $userid (sort keys %invalid_userids) {
 foreach my $host (sort keys %unauth_imap_hosts) {
     if (exists($unauth_imap_hosts{$host})) {
         if ($unauth_imap_hosts{$host} > 10) {
-            print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host\n" if !$silent;
-            #my $result = add_host_to_iptable($iptable_name, $host)
+            print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host" if !$silent;
+			# check if it's a local host
+			# This actually get's many legit clients and can result in poor
+			# IMAP access when I'm overseas
+			if ( !is_a_local_host($host) ) {
+			   my $result = add_host_to_iptable($iptable_name, $host);
+			   print " - Blocking $host" if !$silent;
+			}
+			print "\n" if !$silent;
         }
     }
 }
 
 # report on the connecting Hosts
-my $limit = 25;
+my $limit = 10;
 print "Hosts with more than $limit connections:\n" if !$silent;
 foreach my $host (sort keys %connecting_hosts){
     if (exists($connecting_hosts{$host})) {
@@ -334,9 +347,12 @@ sub parse_5_digit_pid {
             my $user = $1;
             my $hostname = $2;
             my $host = $3;
-            $unauth_imap_users{$user}++;
-            $unauth_imap_hosts{$host}++;
-            $users_by_ip{$user.".".$host}++;
+			# allowed some users
+			if ( not exists($allowed_imap_users{$user}) ) {
+	            $unauth_imap_users{$user}++;
+	            $unauth_imap_hosts{$host}++;
+			}
+		    $users_by_ip{$user.".".$host}++;
         }
 
     }
@@ -574,7 +590,7 @@ sub make_iptable {
     # returns an array of the hosts in the iptable rule
     my $iptable = shift;
     # need to check if it's in the input chain?
-    my $iptable_exists  = `/sbin/iptables -n -L $iptable | wc -l`;
+    my $iptable_exists  = `/sbin/iptables -w -n -L $iptable | wc -l`;
     chomp $iptable_exists;
     my @hosts;
     if ( $iptable_exists < 1 ) {
@@ -632,6 +648,16 @@ sub is_a_local_host {
     if ( ($quads[0] == 172) and ($quads[1] > 15 and $quads[2] < 33) ) { $localhost = 1;} # not pretty, but it works
 	return $localhost;
 }
+sub allowed_users {
+	my %allowed_users;
+	my @users = qw/odaiwai sandra conor roxanne deborah/;
+	for my $user (@users) {
+		$allowed_users{$user} = 1;
+	}
+
+	return \%allowed_users;
+}
+
 package connecting_host;
 sub new {
     my $class = shift;
