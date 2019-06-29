@@ -122,18 +122,24 @@ foreach my $log (@logs) {
 print "\n" if !$silent;
 
 # report on the invalid usernames
-foreach my $userid (sort keys %invalid_userids) {
+my @userids = (sort {$invalid_userids{$b} <=> $invalid_userids{$a}} keys %invalid_userids);
+my $limit = 0.25 * $invalid_userids{$userids[0]};
+print "There were $#userids invalid userids. Userids with more than $limit attempts shown below.\n" if !$silent;
+foreach my $userid (@userids) {
     if (exists($invalid_userids{$userid})) {
-        if ($invalid_userids{$userid} > 1) {
+        if ($invalid_userids{$userid} > $limit) {
             print "\t$invalid_userids{$userid} attempts to deliver to $userid\n" if !$silent;
         }
     }
 }
 
 # This might be overzealous, and target all non compliant IMAP clients
-foreach my $host (sort keys %unauth_imap_hosts) {
+my @hosts = (sort {$unauth_imap_hosts{$b} <=> $unauth_imap_hosts{$a}} keys %unauth_imap_hosts);
+$limit = 0.25 * $unauth_imap_hosts{$hosts[0]};
+print "There were $#hosts unauthorised imap attempts. Hosts with more than $limit attempts shown below.\n" if !$silent;
+foreach my $host (@hosts) {
     if (exists($unauth_imap_hosts{$host})) {
-        if ($unauth_imap_hosts{$host} > 10) {
+        if ($unauth_imap_hosts{$host} > $limit) {
             print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host" if !$silent;
 			# check if it's a local host
 			# This actually get's many legit clients and can result in poor
@@ -148,9 +154,11 @@ foreach my $host (sort keys %unauth_imap_hosts) {
 }
 
 # report on the connecting Hosts
-my $limit = 10;
 print "Hosts with more than $limit connections:\n" if !$silent;
-foreach my $host (sort keys %connecting_hosts){
+@hosts = (sort {$connecting_hosts{$b} <=> $connecting_hosts{$a}} keys %connecting_hosts);
+$limit = 0.25 * $connecting_hosts{$hosts[0]};
+print "There were $#hosts connecting hosts. Hosts with more than $limit connections shown below.\n" if !$silent;
+foreach my $host (@hosts){
     if (exists($connecting_hosts{$host})) {
         if ($connecting_hosts{$host} > $limit ) {
             print "\t$connecting_hosts{$host} connections from $host. Last at $lastconnection{$host}. " if !$silent;
