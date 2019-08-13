@@ -42,7 +42,7 @@ foreach my $option (@options) {
 }
 
 # How many log files are we weading in?
-my $numlogs = 2;                      # Last week, with weekly rotation
+my $numlogs = 2;                      # this week and Last week, with weekly rotation
 if ( $all  == 1 ) { $numlogs = 999; } # All files
 if ( $last == 1 ) { $numlogs = 5;   } # Last month, with weekly rotation
 my @logs = `ls -tr /var/log/maillog* | tail -$numlogs`;
@@ -92,7 +92,11 @@ my %ipv6_addr;
 my %ipv6_hosts;
 my %authids;
 my %lastauthidconnection;
-
+my %to_count;
+# DKIM related
+my %dkim;
+my %confirmed_domain;
+my %confirmed_subdomain;
 # Users allowed to use IMAP
 my $allowed_imap_users = allowed_users(); # reference to a hash
 my %allowed_imap_users = %$allowed_imap_users;
@@ -142,7 +146,7 @@ foreach my $host (@hosts) {
         if ($unauth_imap_hosts{$host} > $limit) {
             print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host" if !$silent;
 			# check if it's a local host
-			# This actually get's many legit clients and can result in poor
+			# This actually gets many legit clients and can result in poor
 			# IMAP access when I'm overseas
 			if ( !is_a_local_host($host) ) {
 			   my $result = add_host_to_iptable($iptable_name, $host);
@@ -154,7 +158,6 @@ foreach my $host (@hosts) {
 }
 
 # report on the connecting Hosts
-print "Hosts with more than $limit connections:\n" if !$silent;
 @hosts = (sort {$connecting_hosts{$b} <=> $connecting_hosts{$a}} keys %connecting_hosts);
 $limit = 0.25 * $connecting_hosts{$hosts[0]};
 print "There were $#hosts connecting hosts. Hosts with more than $limit connections shown below.\n" if !$silent;
@@ -454,8 +457,10 @@ sub parse_14_digit_pid {
         if ( $data =~ /^to=([^ ]*),/ ) {
             if ( exists($to{$qid})) {
                 $to{$qid}.=", $1";
+				$to_count{$qid}++;
             } else {
                 $to{$qid}=$1;
+				$to_count{$qid} = 1;
             }
             $to{$qid}=~s/[\<\>]//g;
             $times{$qid}=$date;
@@ -562,6 +567,32 @@ sub parse_14_digit_pid {
             print YELLOW "\tdone;\t($qid)\t$delay{$qid}\t$ntries{$qid}\n" if $verbose;
             $transaction_completed{$qid}+=1;
         }
+
+        # check for DKIM
+        #if ( $data =~ /Milter insert \(1\)\: header\: Authentication-Results\:.*dkim\=pass.*(rescuetime.com) header.i\=(support\@rescuetime.com)/) {
+        if ( $data =~ /Milter insert \(1\)\:(.*)/) {
+            my $milter_data = $1;
+            # header: Authentication-Results:  diaspoir.net;\n\tdkim=pass (2048-bit key) header.d=linkedin.com header.i=@linkedin.com header.b="v26/QBdt";\n\tdkim=pass (1024-bit key) header.d=maile.linkedin.com header.i=@maile.linkedin.com header.b="ANpoCZhw"
+            if ( $milter_data =~ /dkim=pass/ ) {
+                $dkim{$qid} = 1;
+            }
+            if ( $milter_data =~ / header.d=(.*?) / )   {
+                $confirmed_domain{$qid}  = $1;
+                print YELLOW "\tdone;\t($qid)D:$confirmed_domain{$qid};\n" if  $verbose;
+            }
+            if ( $milter_data =~ / header.i=(.*?) / )   {
+                $confirmed_subdomain{$qid}  = $1;
+                print YELLOW "\tdone;\t($qid)S:$confirmed_subdomain{$qid};\n" if  $verbose;
+                #exit;
+            }
+            if ( $milter_data =~ /header: DKIM-Signature:.*d=(.*?) ;/ ) {
+                $confirmed_domain{$qid}  = "from $1";
+                print YELLOW "\tdone;\t($qid)\t$dkim{$qid};\t$confirmed_domain{$qid}\n" if  $verbose;
+            }
+            #print YELLOW "\tdone;\t($qid)\t$dkim{$qid}\t$milter_data\n" if $verbose;
+            #exit;
+        }
+
         if ( ($transaction_completed{$qid}>=1) &&
             !($silent) &&
             !($stat{$qid} =~ /did not issue MAIL/) &&
@@ -576,7 +607,9 @@ sub parse_14_digit_pid {
             print GREEN, "[$to_relay{$qid}] " if exists $to_relay{$qid};
             print CYAN, "$from{$qid} -> " if exists $from{$qid};
             print CYAN, "$to{$qid} " if exists $to{$qid};
+            print CYAN, "($to_count{$qid}) " if exists $to{$qid};
             print CYAN, "($size{$qid} bytes) " if exists $size{$qid};
+            print GREEN, "DKIM:($confirmed_domain{$qid}) " if exists $dkim{$qid};
             print GREEN, "$stat{$qid}" if exists $stat{$qid};
             if ( exists($spam_score{$qid}) ) {
                 print " $spam_score{$qid}/$required_score{$qid}";
