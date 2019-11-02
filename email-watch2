@@ -139,7 +139,7 @@ foreach my $userid (@userids) {
 
 # This might be overzealous, and target all non compliant IMAP clients
 my @hosts = (sort {$unauth_imap_hosts{$b} <=> $unauth_imap_hosts{$a}} keys %unauth_imap_hosts);
-$limit = 0.25 * $unauth_imap_hosts{$hosts[0]};
+$limit = 0.5 * $unauth_imap_hosts{$hosts[0]};
 print "There were $#hosts unauthorised imap attempts. Hosts with more than $limit attempts shown below.\n" if !$silent;
 foreach my $host (@hosts) {
     if (exists($unauth_imap_hosts{$host})) {
@@ -477,15 +477,21 @@ sub parse_14_digit_pid {
             $times{$qid}=$date;
             print YELLOW "\tstat1:\t($qid)\t$stat{$qid}\n" if $verbose;
         }
-        if ( $data =~ /<([^>]*)>...  550 (.*)$/ ) {
-            $to{$qid}=$1;
-            $stat{$qid}=$2;
-            $times{$qid}=$date;
-            print YELLOW "\tstat2:\t($qid)\t$stat{$qid}\n" if $verbose;
-            if ($stat{$qid} =~ /Address (.*) does not exist at this domain/) {
-                $invalid_userids{$to{$qid}}++;
+        # Check for a REJECT
+        if ( $data =~ /\<(.*)\>\.\.\.\s+550\s+(Address )(.*)( does not exist at this domain).$/ ) {
+             if ( exists($to{$qid})) {
+                $to{$qid}.=", $1";
+				$to_count{$qid}++;
+            } else {
+                $to{$qid}=$1;
+				$to_count{$qid} = 1;
             }
-            #$transaction_completed{$qid} += 0.5;
+            $to{$qid} =$1;
+            $stat{$qid} = "$2$3$4";
+            $invalid_userids{$to{$qid}}++;
+            $times{$qid}=$date;
+			#$transaction_completed{$qid} += 0.1;
+            print YELLOW "\tstat2:\t($qid)\t$transaction_completed{$qid}: $1: $2 \'$3\' $4\n" if $verbose;
         }
         if ( $data =~ /stat=(.*)/ ) {
             $stat{$qid}=$1;
@@ -506,12 +512,21 @@ sub parse_14_digit_pid {
             $times{$qid}=$date;
             print YELLOW "\tto_relay:\t($qid)\t$to_relay{$qid}\n" if $verbose;
         }
+		if ( $data =~ /(lost input channel) from \[([0-9.:a-zA-Z]+)\] (to MTA after rcpt)/ ) {
+            $ip_addr{$qid}=$2;
+			$stat{$qid} = "$1 $3";
+            $times{$qid}=$date;
+            print YELLOW "\tfrom_relay:\t($qid)\t$from_relay{$qid}\n" if $verbose;
+			#$transaction_completed{$qid} += 0.5;
+        }
         if ( $data =~ /from=\<.*relay=.*\[([0-9.:a-zA-Z]+)\]/ ) {
             $from_relay{$qid}=$1;
             $times{$qid}=$date;
             print YELLOW "\tfrom_relay:\t($qid)\t$from_relay{$qid}\n" if $verbose;
-        }
-        if ( $data =~ /makeconnection \((.*) \[IPv6:([0-9A-Za-z:]+)\]\) (.*): (.*)$/ ) {
+			#$transaction_completed{$qid} += 0.5;
+		}
+
+		if ( $data =~ /makeconnection \((.*) \[IPv6:([0-9A-Za-z:]+)\]\) (.*): (.*)$/ ) {
             my $host = $1;
             my $ipv6 = $2;
             $ipv6_hosts{$host}++;
@@ -539,6 +554,14 @@ sub parse_14_digit_pid {
             $spam_tests{$qid} =~ s/\\n/\n/g;
             $spam_tests{$qid} =~ s/\\t/\t\t/g;
         }
+		#if ( $data =~ /(Blocked by SpamAssassin)/){
+		#    $stat{$qid}=$data;
+		#    $times{$qid}=$date;
+		#	#$transaction_completed{$qid} += 0.5;
+		#	print "$data\n";
+		#	exit;
+		#}
+
         if ( $data =~ /([^ ] )*\[([0-9.:a-zA-Z]+)\] (\(may be forged\) )*(did not .*)/ ) {
             $from_relay{$qid}=$2;
             $stat{$qid}=$4;
@@ -607,7 +630,7 @@ sub parse_14_digit_pid {
             print GREEN, "[$to_relay{$qid}] " if exists $to_relay{$qid};
             print CYAN, "$from{$qid} -> " if exists $from{$qid};
             print CYAN, "$to{$qid} " if exists $to{$qid};
-            print CYAN, "($to_count{$qid}) " if exists $to{$qid};
+            print CYAN, "($to_count{$qid}) " if exists $to_count{$qid};
             print CYAN, "($size{$qid} bytes) " if exists $size{$qid};
             print GREEN, "DKIM:($confirmed_domain{$qid}) " if exists $dkim{$qid};
             print GREEN, "$stat{$qid}" if exists $stat{$qid};
@@ -670,8 +693,8 @@ sub add_host_to_iptable {
 
 	# check for a local connection, and never block them
     my $localhost = is_a_local_host($host);
-
     #my $cmd = "/sbin/iptables -A $iptable_name -s $host -j LOG --log-prefix \"SMTP Reject \"";
+	#
     my $cmd = "/sbin/iptables -w -A $iptable_name -p tcp -s $host -j DROP ";
     print "$cmd" if $verbose;
     my $result = `$cmd` if !$localhost;
@@ -687,6 +710,7 @@ sub is_a_local_host {
     if ( $host =~ /^10\./ ) { $localhost = 1;}
     if ( $host =~ /^127\./ ) { $localhost = 1;}
     if ( ($quads[0] == 172) and ($quads[1] > 15 and $quads[2] < 33) ) { $localhost = 1;} # not pretty, but it works
+	if ( ($host =~ /203\.145\./) and ( $quads[2] >= 64) and ($quads[2] <= 79) ) { $localhost = 1;} # three.com.hk
 	return $localhost;
 }
 sub allowed_users {
