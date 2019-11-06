@@ -128,11 +128,14 @@ print "\n" if !$silent;
 # report on the invalid usernames
 my @userids = (sort {$invalid_userids{$b} <=> $invalid_userids{$a}} keys %invalid_userids);
 my $limit = 0.25 * $invalid_userids{$userids[0]};
-print "There were $#userids invalid userids. Userids with more than $limit attempts shown below.\n" if !$silent;
-foreach my $userid (@userids) {
-    if (exists($invalid_userids{$userid})) {
+print "There were $#userids invalid userids (MAX: $invalid_userids{$userids[0]} attempts). Userids with more than $limit attempts shown below.\n" if !$silent;
+#print top 10?
+my ($max_count, $count) = (10, 0);
+for my $userid (@userids) {
+    if (exists($invalid_userids{$userid}) and ( $count <= $max_count) ) {
         if ($invalid_userids{$userid} > $limit) {
             print "\t$invalid_userids{$userid} attempts to deliver to $userid\n" if !$silent;
+			$count++;
         }
     }
 }
