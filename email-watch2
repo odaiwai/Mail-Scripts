@@ -98,6 +98,7 @@ my %dkim;
 my %confirmed_domain;
 my %confirmed_subdomain;
 # Users allowed to use IMAP
+# import from a users.dat file?
 my $allowed_imap_users = allowed_users(); # reference to a hash
 my %allowed_imap_users = %$allowed_imap_users;
 
@@ -713,13 +714,13 @@ sub is_a_local_host {
     if ( $host =~ /^10\./ ) { $localhost = 1;}
     if ( $host =~ /^127\./ ) { $localhost = 1;}
     if ( ($quads[0] == 172) and ($quads[1] > 15 and $quads[2] < 33) ) { $localhost = 1;} # not pretty, but it works
-	if ( ($host =~ /203\.145\./) and ( $quads[2] >= 64) and ($quads[2] <= 79) ) { $localhost = 1;} # three.com.hk
+	if ( ($host =~ /203\.145\./) and ( $quads[2] >= 64) and ($quads[2] <= 79) ) { $localhost = 1;} # three.com.hk - local cell provider
 	return $localhost;
 }
 sub allowed_users {
 	my %allowed_users;
-	my @users = qw/odaiwai sandra conor roxanne deborah/;
-	for my $user (@users) {
+	open ( my $fh, "-|", "ls -l /home | sed '/BACKUP/d'") or die "Can't list the users!";
+	while (my $user = <$fh>) {
 		$allowed_users{$user} = 1;
 	}
 
