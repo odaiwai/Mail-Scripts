@@ -119,8 +119,8 @@ foreach my $log (@logs) {
     while (my $line=<$logfh>) {
         chomp $line;
         print GREEN, "$line\n" if $verbose;
-        my $result = parse_5_digit_pid($log, $line);
-        $result    = parse_14_digit_pid($log, $line);
+        my $result = parse_short_pid($log, $line);
+        $result    = parse_long_pid($log, $line);
     }
     close $logfh;
 }
@@ -128,53 +128,60 @@ print "\n" if !$silent;
 
 # report on the invalid usernames
 my @userids = (sort {$invalid_userids{$b} <=> $invalid_userids{$a}} keys %invalid_userids);
-my $limit = 0.25 * $invalid_userids{$userids[0]};
-print "There were $#userids invalid userids (MAX: $invalid_userids{$userids[0]} attempts). Userids with more than $limit attempts shown below.\n" if !$silent;
-#print top 10?
-my ($max_count, $count) = (10, 0);
-for my $userid (@userids) {
-    if (exists($invalid_userids{$userid}) and ( $count <= $max_count) ) {
-        if ($invalid_userids{$userid} > $limit) {
-            print "\t$invalid_userids{$userid} attempts to deliver to $userid\n" if !$silent;
-			$count++;
-        }
-    }
+if ( $#userids > 0 ) {
+	my $invalid_ids = $#userids; 
+	my $limit = 0.25 * $invalid_userids{$userids[0]};
+	print "There were $invalid_ids invalid userids. Userids with more than $limit attempts shown below.\n" if !$silent;
+	#print top 10?
+	my ($max_count, $count) = (10, 0);
+	for my $userid (@userids) {
+	    if (exists($invalid_userids{$userid}) and ( $count <= $max_count) ) {
+	        if ($invalid_userids{$userid} > $limit) {
+	            print "\t$invalid_userids{$userid} attempts to deliver to $userid\n" if !$silent;
+				$count++;
+	        }
+	    }
+	}
 }
 
 # This might be overzealous, and target all non compliant IMAP clients
 my @hosts = (sort {$unauth_imap_hosts{$b} <=> $unauth_imap_hosts{$a}} keys %unauth_imap_hosts);
-$limit = 0.5 * $unauth_imap_hosts{$hosts[0]};
-print "There were $#hosts unauthorised imap attempts. Hosts with more than $limit attempts shown below.\n" if !$silent;
-foreach my $host (@hosts) {
-    if (exists($unauth_imap_hosts{$host})) {
-        if ($unauth_imap_hosts{$host} > $limit) {
-            print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host" if !$silent;
-			# check if it's a local host
-			# This actually gets many legit clients and can result in poor
-			# IMAP access when I'm overseas
-			if ( !is_a_local_host($host) ) {
-			   my $result = add_host_to_iptable($iptable_name, $host);
-			   print " - Blocking $host" if !$silent;
-			}
-			print "\n" if !$silent;
-        }
-    }
+if ( $#hosts > 0 ) {
+	my $limit = 0.5 * $unauth_imap_hosts{$hosts[0]};
+	print "There were $#hosts unauthorised imap attempts. Hosts with more than $limit attempts shown below.\n" if !$silent;
+	foreach my $host (@hosts) {
+	    if (exists($unauth_imap_hosts{$host})) {
+	        if ($unauth_imap_hosts{$host} > $limit) {
+	            print "\t$unauth_imap_hosts{$host} attempts to access IMAP from $host" if !$silent;
+				# check if it's a local host
+				# This actually gets many legit clients and can result in poor
+				# IMAP access when I'm overseas
+				if ( !is_a_local_host($host) ) {
+				   my $result = add_host_to_iptable($iptable_name, $host);
+				   print " - Blocking $host" if !$silent;
+				}
+				print "\n" if !$silent;
+	        }
+	    }
+	}
 }
 
 # report on the connecting Hosts
 @hosts = (sort {$connecting_hosts{$b} <=> $connecting_hosts{$a}} keys %connecting_hosts);
-$limit = 0.25 * $connecting_hosts{$hosts[0]};
-print "There were $#hosts connecting hosts. Hosts with more than $limit connections shown below.\n" if !$silent;
-foreach my $host (@hosts){
-    if (exists($connecting_hosts{$host})) {
-        if ($connecting_hosts{$host} > $limit ) {
-            print "\t$connecting_hosts{$host} connections from $host. Last at $lastconnection{$host}. " if !$silent;
-            if (exists($rejected_hosts{$host})) {
-                print "Host rejected $rejected_hosts{$host} times." if !$silent;
-            }
-			my $result = add_host_to_iptable($iptable_name, $host);
-            print "\n" if !$silent;
-        }
+if ( $#hosts > 0 ) {
+	my $limit = 0.25 * $connecting_hosts{$hosts[0]};
+	print "There were $#hosts connecting hosts. Hosts with more than $limit connections shown below.\n" if !$silent;
+	foreach my $host (@hosts){
+	    if (exists($connecting_hosts{$host})) {
+	        if ($connecting_hosts{$host} > $limit ) {
+	            print "\t$connecting_hosts{$host} connections from $host. Last at $lastconnection{$host}. " if !$silent;
+	            if (exists($rejected_hosts{$host})) {
+	                print "Host rejected $rejected_hosts{$host} times." if !$silent;
+	            }
+				my $result = add_host_to_iptable($iptable_name, $host);
+	            print "\n" if !$silent;
+	        }
+		}
     }
 }
 
@@ -294,8 +301,9 @@ sub by_timestamp_and_qid {
     $a cmp $b
 }
 
-sub parse_5_digit_pid {
+sub parse_short_pid {
     # Parse for the 5 digit PID (can be 4 digits too)
+    # Can now be longer - up to 7 digits
     my $log = shift;
     my $line = shift;
     if ( $line =~ /^([A-Z][a-z]{2} [0-9 ]{2} [0-9:]{8}) (.*) ([a-z]+)\[([0-9]+)\]: (.*)$/) {
@@ -305,7 +313,7 @@ sub parse_5_digit_pid {
         my $pid=$4;
         my $data=$5;
         $services{$service}++;
-        $pid =~ sprintf ( "%5s", $pid );
+        $pid =~ sprintf ( "%s", $pid );
         if ( $log =~ /\.gz$/) { $pid.=".1"; } else { $pid.=".0"; }
         $imap_connections{$pid} = IMAP_Connection->new($pid);
         #Jul 28 11:37:53 gizmo imapd[11357]: imap service init from 112.118.153.228
@@ -376,7 +384,7 @@ sub parse_5_digit_pid {
         my $hostname=$2;
         my $pid=$3;
         my $data=$4;
-        $pid =~ sprintf ( "%5s", $pid );
+        $pid =~ sprintf ( "%s", $pid );
         #$pid=$log.$pid;
         if ( $log =~ /\.gz$/) { $pid.=".1"; } else { $pid.=".0"; }
         print RED, "\tdate:\t$date\n" if $verbose;
@@ -424,11 +432,11 @@ sub parse_5_digit_pid {
     return 1;
 }
 
-sub parse_14_digit_pid {
+sub parse_long_pid {
     # Parse for the 5 digit PID
     my $log = shift;
     my $line = shift;
-    if ( $line =~ /^([A-Z][a-z]{2} [0-9 ]{2} [0-9:]{8}) (.*) sendmail\[([0-9]*)\]: ([a-zA-Z0-9]{9}[0-9]{5}): (.*)$/) {
+    if ( $line =~ /^([A-Z][a-z]{2} [0-9 ]{2} [0-9:]{8}) (.*) sendmail\[([0-9]*)\]: ([a-zA-Z0-9]{9,}[0-9]{5,}): (.*)$/) {
         my $date=$1;
         my $hostname=$2;
         my $pid=$3;
