@@ -157,8 +157,9 @@ if ( $#hosts > 0 ) {
 				# This actually gets many legit clients and can result in poor
 				# IMAP access when I'm overseas
 				if ( !is_a_local_host($host) ) {
-				   my $result = add_host_to_iptable($iptable_name, $host);
-				   print " - Blocking $host" if !$silent;
+				    my $result = add_host_to_iptable($iptable_name, $host);
+				    my $geodata = geoiplookup($host);
+				    print " - Blocking $host ($geodata)" if !$silent;
 				}
 				print "\n" if !$silent;
 	        }
@@ -174,7 +175,8 @@ if ( $#hosts > 0 ) {
 	foreach my $host (@hosts){
 	    if (exists($connecting_hosts{$host})) {
 	        if ($connecting_hosts{$host} > $limit ) {
-	            print "\t$connecting_hosts{$host} connections from $host. Last at $lastconnection{$host}. " if !$silent;
+				my $geodata = geoiplookup($host);
+	            print "\t$connecting_hosts{$host} connections from $host. Last at $lastconnection{$host}. ($geodata)" if !$silent;
 	            if (exists($rejected_hosts{$host})) {
 	                print "Host rejected $rejected_hosts{$host} times." if !$silent;
 	            }
@@ -191,7 +193,8 @@ if ( $report_auth_failure == 1  and !$silent) {
     foreach my $host (sort {$lastauthfailure{$a} cmp $lastauthfailure{$b} } keys %authfailures) {
         if (exists($authfailures{$host})) {
             #if ($invalid_userids{$userid} > 1) {
-                print "\t$authfailures{$host} authentication failures from $host. Last at $lastauthfailure{$host}.\n";
+				my $geodata = geoiplookup($host);
+                print "\t$authfailures{$host} authentication failures from $host. Last at $lastauthfailure{$host}. ($geodata)\n";
             #add_host_to_iptable($iptable_name, $host);
             my $cmd = "sendmail : $host : spawn /usr/bin/echo \"IP Address blocked on for unauthorised access attempts\"";
             #print "$cmd\n";
@@ -733,6 +736,23 @@ sub allowed_users {
 	}
 
 	return \%allowed_users;
+}
+
+sub geoiplookup {
+	my $host = shift;
+	my @lines = `geoiplookup $host`;
+	my @geodata;
+	if ( is_a_local_host($host) ){
+		push @geodata, "localhost";
+	} else {
+		foreach my $line (@lines) {
+			chomp $line;
+			my ($header, $data) = split(":", $line);
+			push @geodata, $data;
+		}
+	}
+	my $geodata = join(";", @geodata);
+	return $geodata;
 }
 
 package connecting_host;
